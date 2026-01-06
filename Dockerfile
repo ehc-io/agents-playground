@@ -11,8 +11,6 @@ ENV TZ=America/Sao_Paulo
 ENV DISPLAY=:99
 ENV PLAYWRIGHT_BROWSERS_PATH=/usr/local/share/playwright-browsers
 ENV CHROME_PATH=/usr/local/share/playwright-browsers/chromium-1200/chrome-linux/chrome
-# NODE_PATH includes both global npm modules AND our custom stagehand-config
-ENV NODE_PATH=/usr/lib/node_modules:/usr/local/share
 
 # Install Essential Packages and set timezone
 RUN apt-get update && apt-get -y upgrade && \
@@ -97,8 +95,13 @@ RUN echo 'export PATH=$HOME/.local/bin:$PATH' >> /home/${USERNAME}/.zshrc
 # Switch back to root for global installations
 USER root
 
-# Install Node.js packages globally (stagehand, playwright, zod, claude-code)
-RUN npm install -g playwright @browserbasehq/stagehand zod @anthropic-ai/claude-code
+# Install claude-code globally
+RUN npm install -g @anthropic-ai/claude-code
+
+# Create workspace and install browser automation packages locally (ESM compatible)
+RUN mkdir -p /workspace && chown ${USERNAME}:${USERNAME} /workspace
+COPY --chown=${USERNAME}:${USERNAME} to-copy/package.json /workspace/
+RUN cd /workspace && npm install
 
 # Install Playwright browsers to shared location and fix permissions
 RUN npx playwright install chromium && \
@@ -120,51 +123,6 @@ echo "  CHROME_PATH=$CHROME_PATH"\n\
 echo "  STAGEHAND_BROWSER_ARGS=$STAGEHAND_BROWSER_ARGS"\n\
 ' > /usr/local/bin/browser-env && chmod +x /usr/local/bin/browser-env
 
-# Create Stagehand v3 helper module for container environments
-RUN mkdir -p /usr/local/share/stagehand-config && \
-    echo 'import { Stagehand } from "@browserbasehq/stagehand";\n\
-\n\
-// Container-optimized browser arguments\n\
-export const containerBrowserArgs = [\n\
-  "--no-sandbox",\n\
-  "--disable-setuid-sandbox",\n\
-  "--disable-dev-shm-usage",\n\
-  "--disable-gpu",\n\
-  "--disable-software-rasterizer"\n\
-];\n\
-\n\
-// Primary: Stagehand v3 with local browser launch\n\
-export async function createStagehand(options = {}) {\n\
-  const stagehand = new Stagehand({\n\
-    env: "LOCAL",\n\
-    headless: options.headless !== false,\n\
-    localBrowserLaunchOptions: {\n\
-      chromiumSandbox: false,\n\
-      args: containerBrowserArgs,\n\
-      executablePath: process.env.CHROME_PATH || "/usr/local/share/playwright-browsers/chromium-1200/chrome-linux/chrome",\n\
-      ...options.localBrowserLaunchOptions\n\
-    },\n\
-    ...options\n\
-  });\n\
-  return stagehand;\n\
-}\n\
-\n\
-// Fallback: Connect to existing browser via CDP\n\
-export async function createStagehandCDP(cdpUrl, options = {}) {\n\
-  const stagehand = new Stagehand({\n\
-    env: "LOCAL",\n\
-    localBrowserLaunchOptions: {\n\
-      cdpUrl: cdpUrl,\n\
-      ...options.localBrowserLaunchOptions\n\
-    },\n\
-    ...options\n\
-  });\n\
-  return stagehand;\n\
-}\n\
-\n\
-export default createStagehand;\n\
-' > /usr/local/share/stagehand-config/index.mjs && \
-    chmod 644 /usr/local/share/stagehand-config/index.mjs
 
 # Create comprehensive entrypoint script
 RUN echo '#!/bin/bash\n\
@@ -239,16 +197,16 @@ exec "$@"\n\
 # Switch back to user
 USER ${USERNAME}
 
-# Copy application files to workdir
+# Copy utility scripts to /workdir (optional tools)
 COPY --chown=${USERNAME}:${USERNAME} to-copy /workdir
 
-# Set working directory
-WORKDIR /workdir
+# Set working directory to /workspace (where node_modules lives)
+WORKDIR /workspace
 
 # Add custom aliases and paths to .zshrc
 RUN echo "source /mnt/storage/toolbox/containers/aliases 2>/dev/null || true" >> /home/${USERNAME}/.zshrc && \
     echo 'export PATH=/mnt/storage/toolbox/common/:/mnt/storage/toolbox/containers:$HOME/.local/bin:$PATH' >> /home/${USERNAME}/.zshrc && \
-    echo 'export NODE_PATH=/usr/lib/node_modules:/usr/local/share' >> /home/${USERNAME}/.zshrc
+    echo 'cd /workspace' >> /home/${USERNAME}/.zshrc
 
 # Expose ports
 EXPOSE 3001 3002 5900 6080 9222 9223

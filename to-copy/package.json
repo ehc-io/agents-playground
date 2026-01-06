@@ -1,0 +1,9 @@
+{
+  "name": "workspace",
+  "type": "module",
+  "dependencies": {
+    "@browserbasehq/stagehand": "latest",
+    "playwright": "latest",
+    "zod": "latest"
+  }
+}

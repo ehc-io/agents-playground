@@ -41,7 +41,6 @@ services:
       - CHROME_PATH=/usr/local/share/playwright-browsers/chromium-1200/chrome-linux/chrome
       - CHROME_USER_DATA_DIR=/home/${USERNAME}/.chrome-profile
       - STAGEHAND_BROWSER_ARGS=--no-sandbox --disable-setuid-sandbox --disable-dev-shm-usage --disable-gpu
-      - NODE_PATH=/usr/lib/node_modules:/usr/local/share
     
     stdin_open: true
     tty: true
