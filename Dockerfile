@@ -11,7 +11,8 @@ ENV TZ=America/Sao_Paulo
 ENV DISPLAY=:99
 ENV PLAYWRIGHT_BROWSERS_PATH=/usr/local/share/playwright-browsers
 ENV CHROME_PATH=/usr/local/share/playwright-browsers/chromium-1200/chrome-linux/chrome
-ENV NODE_PATH=/usr/local/share
+# NODE_PATH includes both global npm modules AND our custom stagehand-config
+ENV NODE_PATH=/usr/lib/node_modules:/usr/local/share
 
 # Install Essential Packages and set timezone
 RUN apt-get update && apt-get -y upgrade && \
@@ -45,7 +46,14 @@ RUN apt-get install -y \
     libasound2t64 \
     libatspi2.0-0 \
     libgtk-3-0 \
-    xvfb
+    xvfb \
+    x11vnc \
+    websockify \
+    novnc \
+    fluxbox \
+    netcat-openbsd \
+    socat && \
+    ln -sf /usr/share/novnc/vnc.html /usr/share/novnc/index.html
 
 # Create shared Playwright browsers directory (before user creation)
 RUN mkdir -p /usr/local/share/playwright-browsers && \
@@ -112,11 +120,11 @@ echo "  CHROME_PATH=$CHROME_PATH"\n\
 echo "  STAGEHAND_BROWSER_ARGS=$STAGEHAND_BROWSER_ARGS"\n\
 ' > /usr/local/bin/browser-env && chmod +x /usr/local/bin/browser-env
 
-# Create Stagehand helper module for container environments
+# Create Stagehand v3 helper module for container environments
 RUN mkdir -p /usr/local/share/stagehand-config && \
     echo 'import { Stagehand } from "@browserbasehq/stagehand";\n\
 \n\
-// Container-optimized Stagehand configuration\n\
+// Container-optimized browser arguments\n\
 export const containerBrowserArgs = [\n\
   "--no-sandbox",\n\
   "--disable-setuid-sandbox",\n\
@@ -125,15 +133,29 @@ export const containerBrowserArgs = [\n\
   "--disable-software-rasterizer"\n\
 ];\n\
 \n\
+// Primary: Stagehand v3 with local browser launch\n\
 export async function createStagehand(options = {}) {\n\
   const stagehand = new Stagehand({\n\
     env: "LOCAL",\n\
-    headless: true,\n\
-    enableCaching: false,\n\
-    browserLaunchOptions: {\n\
+    headless: options.headless !== false,\n\
+    localBrowserLaunchOptions: {\n\
+      chromiumSandbox: false,\n\
       args: containerBrowserArgs,\n\
       executablePath: process.env.CHROME_PATH || "/usr/local/share/playwright-browsers/chromium-1200/chrome-linux/chrome",\n\
-      ...options.browserLaunchOptions\n\
+      ...options.localBrowserLaunchOptions\n\
+    },\n\
+    ...options\n\
+  });\n\
+  return stagehand;\n\
+}\n\
+\n\
+// Fallback: Connect to existing browser via CDP\n\
+export async function createStagehandCDP(cdpUrl, options = {}) {\n\
+  const stagehand = new Stagehand({\n\
+    env: "LOCAL",\n\
+    localBrowserLaunchOptions: {\n\
+      cdpUrl: cdpUrl,\n\
+      ...options.localBrowserLaunchOptions\n\
     },\n\
     ...options\n\
   });\n\
@@ -144,17 +166,73 @@ export default createStagehand;\n\
 ' > /usr/local/share/stagehand-config/index.mjs && \
     chmod 644 /usr/local/share/stagehand-config/index.mjs
 
-# Create entrypoint script that starts Xvfb
+# Create comprehensive entrypoint script
 RUN echo '#!/bin/bash\n\
-# Start Xvfb (virtual framebuffer) if not already running\n\
-if ! pgrep -x "Xvfb" > /dev/null; then\n\
-    echo "Starting Xvfb on display :99..."\n\
-    Xvfb :99 -screen 0 1920x1080x24 &\n\
-    sleep 1\n\
-    echo "Xvfb started"\n\
-fi\n\
+set -e\n\
+export DISPLAY=:99\n\
 \n\
-# Execute the provided command or default shell\n\
+# ===== Lock Cleanup =====\n\
+clean_chrome_locks() {\n\
+    local profile_dir="${CHROME_USER_DATA_DIR:-/home/${USER}/.chrome-profile}"\n\
+    local locks=("SingletonLock" "SingletonSocket" "SingletonCookie" "DevToolsActivePort" "LOCK" ".lock")\n\
+    for lock in "${locks[@]}"; do\n\
+        rm -f "$profile_dir/$lock" 2>/dev/null || true\n\
+    done\n\
+    echo "Chrome locks cleaned"\n\
+}\n\
+\n\
+# ===== Start Xvfb =====\n\
+start_xvfb() {\n\
+    if ! pgrep -x "Xvfb" > /dev/null; then\n\
+        echo "Starting Xvfb on display :99..."\n\
+        Xvfb :99 -screen 0 1920x1080x24 -ac +extension GLX +render -noreset &\n\
+        sleep 2\n\
+    fi\n\
+}\n\
+\n\
+# ===== Start VNC =====\n\
+start_vnc() {\n\
+    if ! pgrep -x "x11vnc" > /dev/null; then\n\
+        echo "Starting VNC server on port 5900..."\n\
+        x11vnc -display :99 -forever -shared -rfbport 5900 -nopw -xkb &\n\
+        sleep 1\n\
+    fi\n\
+}\n\
+\n\
+# ===== Start noVNC =====\n\
+start_novnc() {\n\
+    if ! pgrep -f "websockify" > /dev/null; then\n\
+        echo "Starting noVNC on port 6080..."\n\
+        websockify --web=/usr/share/novnc 6080 localhost:5900 &\n\
+        sleep 1\n\
+    fi\n\
+}\n\
+\n\
+# ===== Start Window Manager =====\n\
+start_wm() {\n\
+    if command -v fluxbox &> /dev/null && ! pgrep -x "fluxbox" > /dev/null; then\n\
+        fluxbox &\n\
+        sleep 1\n\
+    fi\n\
+}\n\
+\n\
+# ===== Main =====\n\
+echo "Starting Browser Automation Environment..."\n\
+clean_chrome_locks\n\
+start_xvfb\n\
+start_wm\n\
+start_vnc\n\
+start_novnc\n\
+\n\
+echo "========================================="\n\
+echo "Environment Ready!"\n\
+echo "  Display: :99"\n\
+echo "  VNC: localhost:5900"\n\
+echo "  noVNC: http://localhost:6080"\n\
+echo ""\n\
+echo "Browser: ON-DEMAND (launches when scripts run)"\n\
+echo "========================================="\n\
+\n\
 exec "$@"\n\
 ' > /usr/local/bin/entrypoint.sh && chmod +x /usr/local/bin/entrypoint.sh
 
@@ -169,10 +247,11 @@ WORKDIR /workdir
 
 # Add custom aliases and paths to .zshrc
 RUN echo "source /mnt/storage/toolbox/containers/aliases 2>/dev/null || true" >> /home/${USERNAME}/.zshrc && \
-    echo 'export PATH=/mnt/storage/toolbox/common/:/mnt/storage/toolbox/containers:$HOME/.local/bin:$PATH' >> /home/${USERNAME}/.zshrc
+    echo 'export PATH=/mnt/storage/toolbox/common/:/mnt/storage/toolbox/containers:$HOME/.local/bin:$PATH' >> /home/${USERNAME}/.zshrc && \
+    echo 'export NODE_PATH=/usr/lib/node_modules:/usr/local/share' >> /home/${USERNAME}/.zshrc
 
 # Expose ports
-EXPOSE 3001 3002
+EXPOSE 3001 3002 5900 6080 9222 9223
 
 # Set entrypoint to start Xvfb, then run command
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
