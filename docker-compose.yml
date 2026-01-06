@@ -33,6 +33,8 @@ services:
       - /Volumes/EXTERNAL_STORAGE:/mnt/storage
       - ./browser_data/chrome_profiles:/home/${USERNAME}/.chrome-profile:rw
       - ./browser_data/downloads:/home/${USERNAME}/Downloads:rw
+      # Stagehand skill script - mounted to /workspace for node_modules resolution
+      - /Volumes/EXTERNAL_STORAGE/vandame/skills/stagehand/scripts/scrape-url.mjs:/workspace/scrape-url.mjs:ro
 
     environment:
       - DISPLAY=:99
