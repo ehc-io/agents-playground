@@ -1,0 +1,44 @@
+# version: '3.8'
+
+# How to use it
+# 
+# With timestamp (similar to your alias)
+# COMPOSE_PROJECT_NAME=$(date +%s) docker-compose up -d
+#
+# Or set TIMESTAMP environment variable:
+# export TIMESTAMP=$(date +%s)
+# docker-compose up -d
+
+services:
+  agent-playground:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        - USERNAME=${USERNAME}
+    image: ehc-io/agent-playground:latest
+    container_name: agent-playground-${TIMESTAMP:-$(date +%s)}
+    hostname: agent-playground-${TIMESTAMP:-$(date +%s)}
+    user: ${USERNAME}
+    
+    ports:
+      - "3011:3001"
+      - "3012:3002"
+    
+    volumes:
+      - /Volumes/EXTERNAL_STORAGE:/mnt/storage
+    
+    environment:
+      - DISPLAY=:99
+      - NODE_ENV=development
+      - PLAYWRIGHT_BROWSERS_PATH=/usr/local/share/playwright-browsers
+      - CHROME_PATH=/usr/local/share/playwright-browsers/chromium-1200/chrome-linux/chrome
+      - STAGEHAND_BROWSER_ARGS=--no-sandbox --disable-setuid-sandbox --disable-dev-shm-usage --disable-gpu
+      - NODE_PATH=/usr/local/share
+    
+    stdin_open: true
+    tty: true
+    restart: unless-stopped
+
+    # Shared memory size for Chrome/Chromium (prevents crashes)
+    shm_size: '2gb'
